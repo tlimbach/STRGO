@@ -15,7 +15,7 @@ import org.junit.Test;
 
 /**
  *
- * @author thorsten limbach
+ * @author tlimbach
  */
 public class STRGOTest
 {

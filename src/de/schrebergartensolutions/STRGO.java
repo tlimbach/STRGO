@@ -5,9 +5,10 @@
  */
 package de.schrebergartensolutions;
 
-import de.schrebergartensolutions.MethodeFinder.MethodInfo;
 import java.awt.BorderLayout;
 import java.awt.Color;
+import java.awt.Component;
+import java.awt.Cursor;
 import java.awt.Dimension;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
@@ -18,9 +19,12 @@ import java.awt.event.MouseEvent;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 import javax.swing.BorderFactory;
 import javax.swing.DefaultListModel;
@@ -31,6 +35,7 @@ import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
 import javax.swing.JTextPane;
+import javax.swing.SwingUtilities;
 import javax.swing.border.Border;
 import javax.swing.border.TitledBorder;
 import javax.swing.event.ListSelectionEvent;
@@ -64,7 +69,7 @@ import org.openide.windows.TopComponent;
 public final class STRGO implements ActionListener
 {
 
-    List<? extends Line> lines;
+    List<Line> lines;
 
     JScrollPane spList;
     JScrollPane spPreview;
@@ -78,44 +83,13 @@ public final class STRGO implements ActionListener
     @Override
     public void actionPerformed( ActionEvent e )
     {
-        MethodeFinder finder = new MethodeFinder();
-        List<MethodInfo> mInfos = new ArrayList<>();
+        map = new HashMap<>();
+        doit();
 
-        Node[] arr = TopComponent.getRegistry().getCurrentNodes();
-        for ( int i = 0; i < arr.length; i++ )
-        {
-            ec = arr[i].getLookup().lookup( EditorCookie.class );
-            if ( ec != null )
-            {
-                JEditorPane[] panes = ec.getOpenedPanes();
+    }
 
-                if ( panes != null )
-                {
-                    try
-                    {
-                        lines = ec.getLineSet().getLines();
-
-                        for ( int t = 0; t < lines.size(); t++ )
-                        {
-                            Line line = lines.get( t );
-                            MethodInfo res = finder.getMethodForLine( line.getText() );
-
-                            if ( !mInfos.contains( res ) )
-                            {
-                                mInfos.add( res );
-                                map.put( res.getDisplayText(), line.getLineNumber() );
-                            }
-                        }
-
-                    }
-                    catch ( Exception ex )
-                    {
-                        Exceptions.printStackTrace( ex );
-                    }
-                }
-            }
-        }
-
+    private void buildUi( List<String> mInfos )
+    {
         try
         {
             dialog = new JDialog();
@@ -127,12 +101,12 @@ public final class STRGO implements ActionListener
             list = new JList( l1 );
 //            list.setFont( new Font( Font.MONOSPACED, Font.PLAIN, 14 ) );
             list.setFont( list.getFont().deriveFont( 12f ) );
-            Collections.sort( mInfos );
-            for ( MethodInfo m : mInfos )
+
+            for ( String m : mInfos )
             {
-                if ( m.getType() != MethodeFinder.METHOD_TYPE.NONE )
+                if ( !l1.contains( m ) )
                 {
-                    l1.addElement( m.getDisplayText() );
+                    l1.addElement( m );
                 }
             }
 
@@ -309,16 +283,13 @@ public final class STRGO implements ActionListener
                         String searchTxt = searchText.getText();
                         System.out.println( "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx " + mInfos.size() );
                         l1.clear();
-                        Collections.sort( mInfos );
-                        for ( MethodInfo m : mInfos )
+                        sort( mInfos );
+                        for ( String m : mInfos )
                         {
-                            if ( m.getType() != MethodeFinder.METHOD_TYPE.NONE )
+                            if ( isContained( searchTxt, m ) )
                             {
-                                if ( isContained( searchTxt, m.getName() ) )
-                                {
-                                    System.out.println( "ading element .. ." + m.getDisplayText() );
-                                    l1.addElement( m.getDisplayText() );
-                                }
+                                System.out.println( "ading element .. ." + m );
+                                l1.addElement( m );
                             }
                         }
                     }
@@ -344,22 +315,133 @@ public final class STRGO implements ActionListener
         {
             t.printStackTrace();
         }
+    }
+
+    private String doHtml( String methodRumpf )
+    {
+        String newMethodRumpf = "<html>";
+        int idxKlammerAuf = methodRumpf.indexOf( "(" );
+        int idxMethodStart = idxKlammerAuf;
+        while ( true )
+        {
+            idxMethodStart--;
+            if ( methodRumpf.charAt( idxMethodStart ) == ' ' )
+            {
+                newMethodRumpf += methodRumpf.substring( 0, idxMethodStart + 1 );
+                newMethodRumpf += "<b>";
+                newMethodRumpf += methodRumpf.substring( idxMethodStart + 1, methodRumpf.length() );
+                newMethodRumpf += "</b>";
+                newMethodRumpf += "</html>";
+                break;
+            }
+
+        }
+        return newMethodRumpf;
+    }
+
+    Component componentForCursor = null;
+
+    private void sort( List<String> mInfos )
+    {
+        Collections.sort( mInfos, new Comparator<String>()
+        {
+
+            @Override
+            public int compare( String o1, String o2 )
+            {
+                return o1.substring( o1.indexOf( "<b>" ) ).toLowerCase().compareTo( o2.substring( o2.indexOf( "<b>" ) ).toLowerCase() );
+            }
+        } );
+    }
+
+    private void doit()
+    {
+
+        Node[] arr = TopComponent.getRegistry().getCurrentNodes();
+        for ( int i = 0; i < arr.length; i++ )
+        {
+            ec = arr[i].getLookup().lookup( EditorCookie.class );
+            if ( ec != null )
+            {
+                JEditorPane[] panes = ec.getOpenedPanes();
+
+                if ( panes != null )
+                {
+                    componentForCursor = panes[0];
+                    componentForCursor.setCursor( Cursor.getPredefinedCursor( Cursor.WAIT_CURSOR ) );
+                    try
+                    {
+                        new Thread()
+                        {
+                            public void run()
+                            {
+                                final List<String> mInfos = readMethods();
+
+                                sort( mInfos );
+
+                                SwingUtilities.invokeLater( new Runnable()
+                                {
+                                    @Override
+                                    public void run()
+                                    {
+                                        componentForCursor.setCursor( Cursor.getPredefinedCursor( Cursor.DEFAULT_CURSOR ) );
+                                        buildUi( mInfos );
+                                    }
+                                } );
+                            }
+
+                        }.start();
+
+                    }
+                    catch ( Exception ex )
+                    {
+                        Exceptions.printStackTrace( ex );
+                        componentForCursor.setCursor( Cursor.getPredefinedCursor( Cursor.DEFAULT_CURSOR ) );
+                    }
+                }
+            }
+        }
 
     }
 
-//    protected boolean isContained( String searchTxt, String textLine )
-//    {
-//        String[] searchies = searchTxt.split( " " );
-//
-//        for ( int t = 0; t < searchies.length; t++ )
-//        {
-//            if ( !textLine.toLowerCase().contains( searchies[t].toLowerCase() ) )
-//            {
-//                return false;
-//            }
-//        }
-//        return true;
-//    }
+    public List<String> readMethods()
+    {
+        RegExMethodFinder finder = new RegExMethodFinder();
+        List<String> mInfos = new ArrayList<>();
+        lines = (List<Line>) ec.getLineSet().getLines();
+        Map<Line, String> lineTexts = new LineFinder( lines ).getSourcecodeLinesFor();
+
+        Set<Map.Entry<Line, String>> entrySet = lineTexts.entrySet();
+        Iterator<Map.Entry<Line, String>> it = entrySet.iterator();
+        while ( it.hasNext() )
+        {
+            Map.Entry<Line, String> entry = it.next();
+            Line line = entry.getKey();
+            String sourceCodeLine = entry.getValue();
+
+            if ( sourceCodeLine == null )
+            {
+                continue;
+            }
+
+            String methodRumpf = finder.findMethode( sourceCodeLine );
+
+            if ( methodRumpf != null && !mInfos.contains( methodRumpf ) )
+            {
+                methodRumpf = methodRumpf.replace( "{", "" ).trim();
+                methodRumpf = doHtml( methodRumpf );
+                mInfos.add( methodRumpf );
+
+                if ( !map.containsKey( methodRumpf ) )
+                {
+                    map.put( methodRumpf, line.getLineNumber() );
+                }
+            }
+        }
+
+        return mInfos;
+    }
+
     protected boolean isContained( String searchTxt, String textLine )
     {
 
